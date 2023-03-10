@@ -1,26 +1,63 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
+import * as PHPParser from './phpparser';
+import path = require('path');
+import * as MyDiagnostics from './diagnostic';
 
 // This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
 
-	// Use the console to output diagnostic information (console.log) and errors (console.error)
-	// This line of code will only be executed once when your extension is activated
-	console.log('Congratulations, your extension "vscode-php-extra-checks" is now active!');
+  MyDiagnostics.initDiagnostics(context);
 
-	// The command has been defined in the package.json file
-	// Now provide the implementation of the command with registerCommand
-	// The commandId parameter must match the command field in package.json
-	let disposable = vscode.commands.registerCommand('vscode-php-extra-checks.helloWorld', () => {
-		// The code you place here will be executed every time your command is executed
-		// Display a message box to the user
-		vscode.window.showInformationMessage('Hello World from vscode-php-extra-checks!');
-	});
+  vscode.workspace.onDidOpenTextDocument((e:vscode.TextDocument) => {
+    highlightProblems(e);
+  });
 
-	context.subscriptions.push(disposable);
+  vscode.window.onDidChangeActiveTextEditor((e) => {
+    e && e.document && highlightProblems(e.document);
+  }, null, context.subscriptions);
+
+  vscode.workspace.onDidSaveTextDocument((e) => {
+    e && e.uri && highlightProblemsAll(e.uri);
+  });
+
+  vscode.workspace.onDidChangeTextDocument(e => {
+    // TODO do not evaluate on each change for now.
+    // e && e.contentChanges && e.contentChanges.length && e.document &&
+    //   higlightProblemsAll(e.document.uri);
+  });
+
+  highlightProblemsAll();
 }
 
 // This method is called when your extension is deactivated
 export function deactivate() {}
+
+function highlightProblemsAll(uri:vscode.Uri|null = null) {
+  vscode.workspace.textDocuments.map(document => {
+    (!uri || uri.path === document.uri.path) && highlightProblems(document);
+  });
+}
+
+function highlightProblems(document:vscode.TextDocument) {
+  if (path.extname(document.uri.path) !== '.php') { return; }
+  const code = PHPParser.parseCode(document.getText());
+  const functions = PHPParser.findAllFunctions(code);
+
+  MyDiagnostics.clearDiagnostics(document.uri);
+  functions.forEach((func) => {
+    func.type || MyDiagnostics.noReturnType(document.uri, getLastBracket(func));
+  });
+  MyDiagnostics.finishDiagnostics(document.uri);
+}
+
+function getLastBracket(func:PHPParser.NodeLayout): vscode.Range {
+  // TODO - better to do text search for the last bracket between "p" and the start of the body
+  let p, inc = 0;
+  if (func.arguments && func.arguments.length) {
+    p = func.arguments[func.arguments.length - 1].loc.end;
+  } else {
+    p = func.name.loc.end;
+    inc = 1;
+  }
+  return new vscode.Range(p.line - 1, p.column +  inc, p.line - 1, p.column + inc + 1);
+}
